@@ -103,6 +103,20 @@ function extractIncorrectOptions(rawText: string) {
     .filter(Boolean);
 }
 
+function parseTrueFalseCorrectValue(value: string): 'verdadero' | 'falso' | null {
+  const normalized = normalizeText(value).toLowerCase();
+
+  if (/\b(verdadero|true)\b/.test(normalized) || normalized === 'v') {
+    return 'verdadero';
+  }
+
+  if (/\b(falso|false)\b/.test(normalized) || normalized === 'f') {
+    return 'falso';
+  }
+
+  return null;
+}
+
 function parseQuestionsFromPdfText(text: string) {
   const normalizedText = normalizeText(text);
   const pattern = /Fuente\s+(\d+)\s*●\s*Pregunta(\s*\(V\/F\))?:\s*([\s\S]*?)\s*●\s*Opción correcta:\s*([\s\S]*?)\s*Es correcta porque\s*([\s\S]*?)\s*●\s*Opciones incorrectas:\s*([\s\S]*?)\s*Son incorrectas porque\s*([\s\S]*?)(?=\s*Fuente\s+\d+\s*●|$)/gi;
@@ -119,7 +133,11 @@ function parseQuestionsFromPdfText(text: string) {
     const incorrectTexts = extractIncorrectOptions(match[6]);
     const incorrectExplanation = normalizeText(match[7]);
 
-    if (!prompt || !correctText || incorrectTexts.length === 0) {
+    if (!prompt || !correctText) {
+      continue;
+    }
+
+    if (kind === 'multiple' && incorrectTexts.length === 0) {
       continue;
     }
 
@@ -130,18 +148,43 @@ function parseQuestionsFromPdfText(text: string) {
 
     seen.add(candidateKey);
 
-    const baseOptions: QuestionOption[] = [
-      {
-        id: `correct-${source}-${slugify(correctText)}`,
-        text: correctText,
-        isCorrect: true,
-      },
-      ...incorrectTexts.map((optionText, index) => ({
-        id: `wrong-${source}-${index}-${slugify(optionText)}`,
-        text: optionText,
-        isCorrect: false,
-      })),
-    ];
+    const baseOptions: QuestionOption[] =
+      kind === 'truefalse'
+        ? (() => {
+            const correctValue = parseTrueFalseCorrectValue(correctText);
+            if (!correctValue) {
+              return [];
+            }
+
+            return [
+              {
+                id: `vf-verdadero-${source}`,
+                text: 'Verdadero',
+                isCorrect: correctValue === 'verdadero',
+              },
+              {
+                id: `vf-falso-${source}`,
+                text: 'Falso',
+                isCorrect: correctValue === 'falso',
+              },
+            ];
+          })()
+        : [
+            {
+              id: `correct-${source}-${slugify(correctText)}`,
+              text: correctText,
+              isCorrect: true,
+            },
+            ...incorrectTexts.map((optionText, index) => ({
+              id: `wrong-${source}-${index}-${slugify(optionText)}`,
+              text: optionText,
+              isCorrect: false,
+            })),
+          ];
+
+    if (baseOptions.length === 0) {
+      continue;
+    }
 
     const options = seededShuffle(baseOptions, `${source}-${prompt}`);
     const correctOption = options.find((option) => option.isCorrect) ?? options[0];
