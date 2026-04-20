@@ -117,21 +117,31 @@ function parseTrueFalseCorrectValue(value: string): 'verdadero' | 'falso' | null
   return null;
 }
 
+function cleanParsedValue(value: string) {
+  return normalizeText(value).replace(/^●\s*/, '').replace(/\s*●\s*$/, '');
+}
+
 function parseQuestionsFromPdfText(text: string) {
   const normalizedText = normalizeText(text);
-  const pattern = /Fuente\s+(\d+)\s*●\s*Pregunta(\s*\(V\/F\))?:\s*([\s\S]*?)\s*●\s*Opción correcta:\s*([\s\S]*?)\s*Es correcta porque\s*([\s\S]*?)\s*●\s*Opciones incorrectas:\s*([\s\S]*?)\s*Son incorrectas porque\s*([\s\S]*?)(?=\s*Fuente\s+\d+\s*●|$)/gi;
+  const blockPattern = /Fuente\s+(\d+)\s*●([\s\S]*?)(?=Fuente\s+\d+\s*●|$)/gi;
   const questions: QuizQuestion[] = [];
-  const seen = new Set<string>();
-  let match: RegExpExecArray | null = null;
+  let blockMatch: RegExpExecArray | null = null;
 
-  while ((match = pattern.exec(normalizedText)) !== null) {
-    const source = match[1];
-    const kind: QuestionKind = match[2] ? 'truefalse' : 'multiple';
-    const prompt = normalizeText(match[3]);
-    const correctText = stripQuotes(match[4]);
-    const correctExplanation = normalizeText(match[5]);
-    const incorrectTexts = extractIncorrectOptions(match[6]);
-    const incorrectExplanation = normalizeText(match[7]);
+  while ((blockMatch = blockPattern.exec(normalizedText)) !== null) {
+    const source = blockMatch[1];
+    const block = blockMatch[2];
+    const fields = block.match(/(Pregunta\s*(\(V\/F\))?\s*:)\s*([\s\S]*?)\s*(?:●\s*)?O\S*\s+correcta\s*:\s*([\s\S]*?)\s*Es\s+correcta\s+porque\s*([\s\S]*?)\s*(?:●\s*)?Opciones\s+incorrectas\s*:\s*([\s\S]*?)\s*(?:Son\s+incorrectas(?:\s+para\s+esta\s+pregunta)?\s+porque|Es\s+incorrecta\s+porque)\s*([\s\S]*)$/i);
+
+    if (!fields) {
+      continue;
+    }
+
+    const kind: QuestionKind = fields[2] ? 'truefalse' : 'multiple';
+    const prompt = cleanParsedValue(fields[3]);
+    const correctText = stripQuotes(cleanParsedValue(fields[4]));
+    const correctExplanation = cleanParsedValue(fields[5]);
+    const incorrectTexts = extractIncorrectOptions(cleanParsedValue(fields[6]));
+    const incorrectExplanation = cleanParsedValue(fields[7]);
 
     if (!prompt || !correctText) {
       continue;
@@ -140,13 +150,6 @@ function parseQuestionsFromPdfText(text: string) {
     if (kind === 'multiple' && incorrectTexts.length === 0) {
       continue;
     }
-
-    const candidateKey = `${kind}::${prompt}::${correctText}::${incorrectTexts.join('|')}`;
-    if (seen.has(candidateKey)) {
-      continue;
-    }
-
-    seen.add(candidateKey);
 
     const baseOptions: QuestionOption[] =
       kind === 'truefalse'
